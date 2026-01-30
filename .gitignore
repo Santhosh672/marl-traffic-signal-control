@@ -1,0 +1,20 @@
+# --- Python Specific ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# --- SUMO/Simulation Artifacts ---
+# Silencing the error logs you redirected
+sumo_errors.log
+*.trc
+*.out
+
+# --- Research Data & Large Files ---
+# Ignore these to keep GitHub repo size small
+best_single_agent.pth
+training_log.txt
+baseline_stats.csv
+baseline_performance.csv
+*.png
