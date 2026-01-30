@@ -8,8 +8,8 @@ from model import MAPPOAgent
 # --- CONFIGURATION FROM YOUR PROJECT FILES ---
 # Path updated to your directory structure
 SUMO_CFG = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg" 
-EPISODES = 150
-STEPS_PER_EPISODE = 720 # (3600s sim / 5s intervals)
+EPISODES = 50
+STEPS_PER_EPISODE = 360 # (3600s sim / 5s intervals)
 
 def train_single_agent():
     log_file = "training_log.txt"
