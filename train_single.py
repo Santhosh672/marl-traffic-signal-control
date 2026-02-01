@@ -50,29 +50,32 @@ def train_single_agent():
             next_state_t = torch.FloatTensor(next_states[agent_id]).unsqueeze(0)
             
             # --- STEP 1: CRITIC UPDATE (Value Estimation) ---
-            # Predict the value of the current state
             value = agent.critic(state_t)
-            
-            # Calculate Target using Bellman Equation
             with torch.no_grad():
                 next_value = agent.critic(next_state_t)
                 td_target = rewards[agent_id] + (0.99 * next_value * (1 - int(dones[agent_id])))
             
-            # Calculate Critic Loss (MSE)
             critic_loss = torch.nn.functional.mse_loss(value, td_target)
             
-            # Backpropagate Critic
             agent.critic_optimizer.zero_grad()
             critic_loss.backward()
             agent.critic_optimizer.step()
 
             # --- STEP 2: ACTOR UPDATE (Policy Strategy) ---
-            # Detach the advantage to prevent 'backward through graph twice' error
-            # This follows the CTDE training logic
-            advantage = (td_target - value).detach()
-            actor_loss = -(log_prob * advantage)
+            # 1. Get current probabilities and distribution 
+            probs = agent.actor(state_t)  # <--- DEFINING PROBS HERE
+            dist = torch.distributions.Categorical(probs)
             
-            # Backpropagate Actor
+            # 2. Calculate entropy for exploration
+            entropy = dist.entropy().mean()
+            
+            # 3. Calculate advantage and loss 
+            advantage = (td_target - value).detach()
+            
+            # Substracting entropy encourages the agent to stay "uncertain" 
+            # and explore other phases
+            actor_loss = -(log_prob * advantage) - (0.01 * entropy) 
+            
             agent.actor_optimizer.zero_grad()
             actor_loss.backward()
             agent.actor_optimizer.step()

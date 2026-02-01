@@ -68,35 +68,31 @@ class MultiAgentTrafficEnv:
     def _calculate_reward(self, agent_id, current_action):
         total_penalty = 0
         
-        # 1. THE SWITCHING PENALTY (Stability)
-        # If the current action is different from the last, we apply a 'cost'
+        # 1. Switching Penalty (Keep this at -50 for stability)
         if current_action != self.last_action[agent_id]:
-            total_penalty -= 50.0  # Prevents changing the light every 5 seconds
+            total_penalty -= 50.0 
             
         controlled_lanes = traci.trafficlight.getControlledLanes(agent_id)
         
         for v_id in traci.vehicle.getIDList():
             if traci.vehicle.getLaneID(v_id) in controlled_lanes:
                 v_type = traci.vehicle.getTypeID(v_id)
-                
-                # 2. EFFICIENCY: Existing Time Loss
                 delay = traci.vehicle.getTimeLoss(v_id) 
                 
-                # 3. FAIRNESS: Quadratic Waiting Time (Pressure)
-                # Squaring the value makes long waits much more 'painful' to the AI
-                wait_time = traci.vehicle.getWaitingTime(v_id)
+                # 2. Capped Quadratic Waiting Time
+                # We cap wait_time at 120s so the penalty doesn't explode
+                raw_wait = traci.vehicle.getWaitingTime(v_id)
+                wait_time = min(raw_wait, 120) 
                 pressure = (wait_time ** 2) 
                 
                 weight = self.vtype_weights.get(v_type, 1.0)
-                
-                # Apply weight to both the delay and the waiting pressure
                 total_penalty -= ((delay + pressure) * weight)
         
-        # Update the memory for the next step
         self.last_action[agent_id] = current_action
         
-        # Normalized by 500.0 to keep the values stable for MAPPO
-        return total_penalty / 500.0
+        # 3. INCREASE NORMALIZATION: Use 10000 instead of 500
+        # This brings your -18M reward down to a manageable range (around -10 to -50)
+        return total_penalty / 10000.0
 
     def step(self, actions):
         for agent_id, action in actions.items():
@@ -107,9 +103,10 @@ class MultiAgentTrafficEnv:
             
         states = {a: self._get_state(a) for a in self.agent_ids}
         
-        # PASS ACTION HERE: So the reward function knows if a switch happened
+        # UPDATED: Pass the current action as the second argument
         rewards = {a: self._calculate_reward(a, actions[a]) for a in self.agent_ids}
         
+        # Termination at 1800s for faster training
         done = traci.simulation.getTime() >= 1800 or traci.simulation.getMinExpectedNumber() <= 0
         dones = {a: done for a in self.agent_ids}
         
