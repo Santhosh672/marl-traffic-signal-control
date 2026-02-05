@@ -1,8 +1,8 @@
 import torch
 import numpy as np
 import multiprocessing as mp
-from env import MultiAgentTrafficEnv
-from model import MAPPOAgent
+from core.env import MultiAgentTrafficEnv
+from core.model import MAPPOAgent
 
 # --- Configuration ---
 NUM_WORKERS = 4  

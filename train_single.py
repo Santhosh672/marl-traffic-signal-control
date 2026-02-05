@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from gymnasium.spaces import Discrete
-from env import MultiAgentTrafficEnv
-from model import MAPPOAgent
+from core.env import MultiAgentTrafficEnv
+from core.model import MAPPOAgent
 
 # --- CONFIGURATION FROM YOUR PROJECT FILES ---
 # Path updated to your directory structure

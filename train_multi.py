@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from env import MultiAgentTrafficEnv
-from model import MAPPOAgent
+from core.env import MultiAgentTrafficEnv
+from core.model import MAPPOAgent
 
 # Configuration
 SUMO_CFG = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg"
