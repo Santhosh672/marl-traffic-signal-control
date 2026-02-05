@@ -30,7 +30,7 @@ if __name__ == "__main__":
     # Update with your actual path
     cfg_path = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg"
     df = run_baseline(cfg_path)
-    df.to_csv("baseline_performance.csv", index=False)
+    df.to_csv("output/stats/baseline_performance.csv", index=False)
     print("Baseline stats saved to baseline_performance.csv")
 
 def plot_baseline_stats(csv_file):
@@ -44,7 +44,7 @@ def plot_baseline_stats(csv_file):
     plt.ylabel('Total Waiting Time (Cumulative)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('baseline_graph.png')
+    plt.savefig('output/stats/baseline_graph.png')
     plt.show()
 
 # Run this after generating the CSV

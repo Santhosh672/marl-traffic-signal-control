@@ -42,7 +42,7 @@ def run_baseline_benchmark():
 
 def generate_performance_report(df):
     # 1. Save Raw Numbers
-    df.to_csv("baseline_stats.csv", index=False)
+    df.to_csv("output/stats/baseline_stats.csv", index=False)
     
     # 2. Create Comparison Graph
     plt.figure(figsize=(12, 6))
@@ -55,7 +55,7 @@ def generate_performance_report(df):
     plt.legend()
     
     # Save the graph for your paper
-    plt.savefig('baseline_performance_graph.png', dpi=300)
+    plt.savefig('output/stats/baseline_performance_graph.png', dpi=300)
     print("Graphs and CSV generated successfully.")
     plt.show()
 

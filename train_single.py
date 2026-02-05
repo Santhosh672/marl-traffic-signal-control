@@ -12,7 +12,7 @@ EPISODES = 50
 STEPS_PER_EPISODE = 360 # (3600s sim / 5s intervals)
 
 def train_single_agent():
-    log_file = "training_log.txt"
+    log_file = "output/log/training_log.txt"
     
     # 1. Initialize Environment
     # use_gui=True lets you watch the 6 vehicle types interact
@@ -101,7 +101,7 @@ def train_single_agent():
 
         # Save the best model based on weighted delay penalty
         if episode > 0 and rewards_history[-1] > max(rewards_history[:-1]):
-            torch.save(agent.actor.state_dict(), "best_single_agent.pth")
+            torch.save(agent.actor.state_dict(), "output/model/best_single_agent.pth")
             print(">>> New Best Model Saved!")
 
     env.close()
@@ -118,7 +118,7 @@ if __name__ == "__main__":
         plt.xlabel("Episode")
         plt.ylabel("Cumulative Reward (Negative Delay)")
         plt.grid(True)
-        plt.savefig("learning_curve.png")
+        plt.savefig("output/stats/learning_curve.png")
         plt.show()
     except Exception as e:
         print(f"Training interrupted: {e}")

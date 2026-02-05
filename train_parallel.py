@@ -9,7 +9,7 @@ NUM_WORKERS = 4
 SUMO_CFG = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg"
 EPISODES = 150
 STEPS_PER_EPISODE = 360 
-SAVE_FOLDER = "models_parallel_9j"
+SAVE_FOLDER = "output/model"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def worker_process(worker_id, child_pipe, junction_configs):

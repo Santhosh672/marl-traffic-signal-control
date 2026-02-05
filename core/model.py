@@ -59,8 +59,9 @@ class MAPPOAgent:
         action = dist.sample()
         return action.item(), dist.log_prob(action)
 
-    def save_model(self, folder="models"):
+    def save_model(self, folder="output/model"): # Updated default
         import os
         if not os.path.exists(folder):
-            os.makedirs(folder)
+            os.makedirs(folder, exist_ok=True)
         torch.save(self.actor.state_dict(), f"{folder}/actor_{self.agent_id}.pth")
+        torch.save(self.critic.state_dict(), f"{folder}/critic_{self.agent_id}.pth") # Added Critic

@@ -91,7 +91,7 @@ def train_multi_agent():
     
     # Save all 9 models after training
     for j_id, agent in agents.items():
-        agent.save_model(folder="models_9_junctions")
+        agent.save_model(folder="output/model")
 
     env.close()
 
