@@ -106,25 +106,26 @@ class MultiAgentTrafficEnv:
         
         return states, rewards, dones, {}
 
-    def reset(self):
-        """Resets simulation and dynamically detects junction action spaces."""
+    # Update reset to accept unique process parameters
+    def reset(self, label="sim0", port=8813):
         if traci.isLoaded():
             traci.close()
             
         traci.start([
             self.sumo_binary, "-c", self.sumo_cfg, 
             "--waiting-time-memory", "1000",
-            "--lateral-resolution", "0.2", # Enables sublane filtering
+            "--lateral-resolution", "0.2",
             "--no-warnings", "true",
             "--no-step-log", "true",
             "--step-length", "0.5",
-        ])
+        ], label=label, port=port) # Added label and port
 
-        # Dynamic phase detection for heterogeneous intersections
+        # Use the specific label to identify this connection
+        conn = traci.getConnection(label)
+        
         for agent in self.agent_ids:
-            num_phases = len(traci.trafficlight.getAllProgramLogics(agent)[0].phases)
+            num_phases = len(conn.trafficlight.getAllProgramLogics(agent)[0].phases)
             self.action_spaces[agent] = Discrete(num_phases)
-            self.observation_spaces[agent] = Box(low=0, high=1, shape=(12,), dtype=np.float32)
             self.last_action[agent] = 0
 
         return {a: self._get_state(a) for a in self.agent_ids}
