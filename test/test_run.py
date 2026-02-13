@@ -1,4 +1,4 @@
-from env import MultiAgentTrafficEnv
+from core.env import MultiAgentTrafficEnv
 
 # 1. Initialize the environment with your config
 sumo_cfg_path = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg"

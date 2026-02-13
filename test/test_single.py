@@ -1,7 +1,7 @@
 import torch
 import traci
-from env import MultiAgentTrafficEnv
-from model import MAPPOAgent
+from core.env import MultiAgentTrafficEnv
+from core.model import MAPPOAgent
 from gymnasium.spaces import Discrete
 
 # --- CONFIGURATION ---
