@@ -2,12 +2,12 @@ import torch
 import numpy as np
 import multiprocessing as mp
 import os
+import pandas as pd
 from core.env import MultiAgentTrafficEnv
 from core.model import MAPPOAgent
 
-# --- Configuration & Path Hygiene ---
+# --- Configuration ---
 NUM_WORKERS = 4  
-# Use absolute paths or paths relative to the project root
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SUMO_CFG = r"E:\SUMO_Software\TestSim\Sample2\Sample1.sumocfg"
 SAVE_FOLDER = os.path.join(BASE_DIR, "output", "model")
@@ -15,15 +15,17 @@ EPISODES = 150
 STEPS_PER_EPISODE = 360 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def worker_process(worker_id, child_pipe, junction_configs):
+# --- Check for CUDA ---
+print(f"CUDA Available: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"GPU Device: {torch.cuda.get_device_name(0)}")
+
+def worker_process(worker_id, child_pipe, junction_ids):
     """Sub-process running a dedicated SUMO instance."""
     env = MultiAgentTrafficEnv(SUMO_CFG, use_gui=False)
-    env.agent_ids = list(junction_configs.keys())
-    
-    # Each worker needs a unique label and port to run in parallel
+    env.agent_ids = junction_ids
+    # reset() here will trigger the Green-Only filtering in env.py
     states = env.reset(label=f"worker_{worker_id}", port=8813 + worker_id)
-    
-    # Send the initial state to the manager so it can pick the first action
     child_pipe.send(states)
 
     while True:
@@ -40,64 +42,64 @@ def worker_process(worker_id, child_pipe, junction_configs):
             states = env.reset(label=f"worker_{worker_id}", port=8813 + worker_id)
 
 def train_parallel():
-    # 9-junction mapping from your network
-    junction_configs = {
-        "J0": 6, "J11": 4, "J12": 4, "J13": 4, "J15": 4, 
-        "J17": 4, "J2": 4, "J8": 4, "clusterJ2_J4": 8
-    }
+    # 1. Tracker Initialization (Prevents NameError)
+    rewards_history = []
+    junction_ids = ["J0", "J11", "J12", "J13", "J15", "J17", "J2", "J8", "clusterJ2_J4"]
     
-    # 108 global features = 9 agents * 12 local features
-    global_obs_dim = 12 * len(junction_configs)
-    agents = {j: MAPPOAgent(j, 12, action_dim, global_obs_dim) for j, action_dim in junction_configs.items()}
+    # 2. Dynamic Action Space Discovery (Prevents IndexError)
+    # We run a brief temp env to see how many Green phases env.py found for each junction
+    temp_env = MultiAgentTrafficEnv(SUMO_CFG, use_gui=False)
+    temp_env.agent_ids = junction_ids
+    temp_env.reset() 
+    junction_configs = {j: temp_env.action_spaces[j].n for j in junction_ids}
+    temp_env.close()
+    
+    print(f"Action Spaces Discovered: {junction_configs}")
 
-    # Initialize pipes and processes
+    # 3. Agent Initialization
+    global_obs_dim = 12 * len(junction_ids)
+    agents = {j: MAPPOAgent(j, 12, junction_configs[j], global_obs_dim) for j in junction_ids}
+
+    # 4. Process Setup
     pipes, processes = [], []
     for i in range(NUM_WORKERS):
         parent_conn, child_conn = mp.Pipe()
-        p = mp.Process(target=worker_process, args=(i, child_conn, junction_configs))
+        p = mp.Process(target=worker_process, args=(i, child_conn, junction_ids))
         p.start()
         pipes.append(parent_conn)
         processes.append(p)
 
-    # Initial states from all workers to bootstrap the loop
     current_worker_states = [pipe.recv() for pipe in pipes]
-
     print(f"Parallel Training Started: {NUM_WORKERS} workers active.")
 
+    # 5. Training Loop
     for episode in range(EPISODES):
+        ep_rewards = [] 
         for step in range(STEPS_PER_EPISODE):
-            # --- BROADCAST PHASE ---
-            # Collect actions for all workers and send them simultaneously
+            # BROADCAST
             worker_log_probs_batch = []
-            worker_actions_batch = []
-
             for i in range(NUM_WORKERS):
-                actions = {}
-                log_probs = {}
-                for j_id in junction_configs:
+                actions, log_probs = {}, {}
+                for j_id in junction_ids:
                     action, log_prob = agents[j_id].select_action(current_worker_states[i][j_id])
-                    actions[j_id] = action
-                    log_probs[j_id] = log_prob
+                    actions[j_id], log_probs[j_id] = action, log_prob
                 
-                worker_actions_batch.append(actions)
                 worker_log_probs_batch.append(log_probs)
-                pipes[i].send(actions) # Non-blocking send
+                pipes[i].send(actions)
 
-            # --- COLLECT PHASE ---
-            # Now wait for all workers to finish their 5-second simulation step
+            # COLLECT
             worker_results = [pipe.recv() for pipe in pipes] 
 
-            # --- UPDATE PHASE (Centralized Training) ---
+            # UPDATE
             for i, (next_states, rewards, dones) in enumerate(worker_results):
-                # Concatenate all 9 agent states for the 108-dim Critic
-                global_s = np.concatenate([current_worker_states[i][j] for j in junction_configs.keys()])
-                global_s_t = torch.FloatTensor(global_s).unsqueeze(0).to(device)
+                ep_rewards.append(np.mean(list(rewards.values())))
                 
-                global_next_s = np.concatenate([next_states[j] for j in junction_configs.keys()])
+                global_s = np.concatenate([current_worker_states[i][j] for j in junction_ids])
+                global_s_t = torch.FloatTensor(global_s).unsqueeze(0).to(device)
+                global_next_s = np.concatenate([next_states[j] for j in junction_ids])
                 global_next_s_t = torch.FloatTensor(global_next_s).unsqueeze(0).to(device)
 
-                for j_id in junction_configs:
-                    # Update Critic (Value estimation)
+                for j_id in junction_ids:
                     value = agents[j_id].critic(global_s_t)
                     with torch.no_grad():
                         next_val = agents[j_id].critic(global_next_s_t)
@@ -108,33 +110,44 @@ def train_parallel():
                     critic_loss.backward()
                     agents[j_id].critic_optimizer.step()
 
-                    # Update Actor (Policy Improvement)
                     curr_obs_t = torch.FloatTensor(current_worker_states[i][j_id]).unsqueeze(0).to(device)
                     curr_probs = agents[j_id].actor(curr_obs_t)
                     dist = torch.distributions.Categorical(curr_probs)
                     entropy = dist.entropy().mean()
                     advantage = (target - value).detach()
                     
-                    # Log-prob from the specific worker action
                     actor_loss = -(worker_log_probs_batch[i][j_id] * advantage) - (0.01 * entropy)
-                    
                     agents[j_id].actor_optimizer.zero_grad()
                     actor_loss.backward()
                     agents[j_id].actor_optimizer.step()
 
-                # Update local state for the next step
                 current_worker_states[i] = next_states
 
-        if episode % 10 == 0:
-            print(f"Episode {episode} Complete. Saving models to {SAVE_FOLDER}...")
-            for agent in agents.values(): 
-                agent.save_model(folder=SAVE_FOLDER) # Directed to output/model
+        # Log Episode
+        avg_reward = np.mean(ep_rewards) if ep_rewards else 0
+        rewards_history.append(avg_reward)
 
-    # Cleanup
+        if episode % 10 == 0:
+            print(f"Episode {episode}")
+            for agent in agents.values(): 
+                agent.save_model(folder=SAVE_FOLDER)
+
+    # 6. Final Report Generation
+    summary_path = os.path.join(BASE_DIR, "output", "stats", "training_summary.csv")
+    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+    pd.DataFrame({"Episode": range(len(rewards_history)), "Avg_Reward": rewards_history}).to_csv(summary_path, index=False)
+    print(f"Summary saved to {summary_path}")
+
+    # 7. Cleanup
     for pipe in pipes: pipe.send(None)
     for p in processes: p.join()
 
 if __name__ == "__main__":
-    # Required for Windows multiprocessing safety
     mp.set_start_method('spawn', force=True)
-    train_parallel()
+    try:
+        train_parallel()
+        print("Training complete. Laptop shutting down in 60s...")
+    except Exception as e:
+        print(f"Training crashed: {e}. Shutting down to save power.")
+    finally:
+        os.system("shutdown /s /f /t 60")

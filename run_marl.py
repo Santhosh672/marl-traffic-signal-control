@@ -10,27 +10,35 @@ MODEL_DIR = "output/model"  # Where your .pth files are stored
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def run_trained_marl():
-    # 1. Initialize Env with GUI
+    # 1. Temporary Env to discover CORRECT action dimensions (Green-Only)
+    # We use use_gui=False here just for discovery to avoid flickering windows
+    temp_env = MultiAgentTrafficEnv(SUMO_CFG, use_gui=False)
+    junction_ids = ["J0", "J11", "J12", "J13", "J15", "J17", "J2", "J8", "clusterJ2_J4"]
+    temp_env.agent_ids = junction_ids
+    temp_env.reset() # Triggers the filtering logic in env.py
+    
+    # Map IDs to the actual number of Green phases found
+    junction_configs = {j: temp_env.action_spaces[j].n for j in junction_ids}
+    temp_env.close()
+    
+    print(f"Action Spaces Discovered: {junction_configs}")
+
+    # 2. Initialize Main Env with GUI
     env = MultiAgentTrafficEnv(SUMO_CFG, use_gui=True)
+    env.agent_ids = junction_ids
+    global_obs_dim = 12 * len(env.agent_ids)
     
-    # 2. Map Junction IDs to their phase counts from Sample2.net.xml
-    junction_configs = {
-        "J0": 6, "J11": 4, "J12": 4, "J13": 4, "J15": 4, 
-        "J17": 4, "J2": 4, "J8": 4, "clusterJ2_J4": 8
-    }
-    env.agent_ids = list(junction_configs.keys())
-    global_obs_dim = 12 * len(env.agent_ids) # 108 features total
-    
-    # 3. Initialize and Load Agents
+    # 3. Initialize and Load Agents using discovered dimensions
     agents = {}
     print(">>> Loading Trained Models...")
     for j_id, action_dim in junction_configs.items():
+        # Initialize agent with the CORRECT dimension (e.g. 3 instead of 6)
         agent = MAPPOAgent(j_id, 12, action_dim, global_obs_dim)
         actor_path = os.path.join(MODEL_DIR, f"actor_{j_id}.pth")
         
         if os.path.exists(actor_path):
             agent.actor.load_state_dict(torch.load(actor_path, map_location=device))
-            agent.actor.eval() # Set to evaluation mode
+            agent.actor.eval()
             agents[j_id] = agent
         else:
             print(f"Warning: Model for {j_id} not found at {actor_path}")
@@ -46,13 +54,12 @@ def run_trained_marl():
         while True:
             actions = {}
             for j_id, agent in agents.items():
-                # Inference: Pick the best action (argmax) instead of sampling
                 with torch.no_grad():
                     state_t = torch.FloatTensor(states[j_id]).unsqueeze(0).to(device)
                     probs = agent.actor(state_t)
                     actions[j_id] = torch.argmax(probs).item()
 
-            # Execute actions in SUMO
+            # Execute actions in SUMO (env.step maps these to XML indices)
             next_states, rewards, dones, _ = env.step(actions)
             
             for j_id in rewards:

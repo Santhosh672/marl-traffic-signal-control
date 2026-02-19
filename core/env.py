@@ -93,21 +93,6 @@ class MultiAgentTrafficEnv:
         # 4. Normalization: Scaled to 100,000 for CTDE Critic stability
         return total_penalty / 100000.0
 
-    def step(self, actions):
-        for agent_id, action in actions.items():
-            traci.trafficlight.setPhase(agent_id, action)
-            
-        for _ in range(10): 
-            traci.simulationStep()
-            
-        states = {a: self._get_state(a) for a in self.agent_ids}
-        rewards = {a: self._calculate_reward(a, actions[a]) for a in self.agent_ids}
-        
-        done = traci.simulation.getTime() >= 1800 or traci.simulation.getMinExpectedNumber() <= 0
-        dones = {a: done for a in self.agent_ids}
-        
-        return states, rewards, dones, {}
-
     def reset(self, label="sim0", port=8813):
         if traci.isLoaded():
             traci.close()
@@ -127,12 +112,50 @@ class MultiAgentTrafficEnv:
         ], label=label, port=port)
 
         conn = traci.getConnection(label)
+        
+        # --- NEW: Phase Filtering Logic ---
+        self.green_phases = {} 
         for agent in self.agent_ids:
-            num_phases = len(conn.trafficlight.getAllProgramLogics(agent)[0].phases)
-            self.action_spaces[agent] = Discrete(num_phases)
+            # Retrieve the traffic light logic from the XML
+            logic = conn.trafficlight.getAllProgramLogics(agent)[0]
+            phases = logic.phases
+            
+            # Filter for phases that contain 'G' (Green) and lack 'y' (Yellow)
+            # This ensures the AI only picks phases that move traffic
+            valid_indices = [i for i, p in enumerate(phases) if ('G' in p.state or 'g' in p.state) and 'y' not in p.state]
+            
+            # Fallback in case a junction has no 'pure green' phases
+            if not valid_indices:
+                valid_indices = [i for i, p in enumerate(phases) if 'G' in p.state or 'g' in p.state]
+                
+            self.green_phases[agent] = valid_indices
+            
+            # The AI action space is now limited to the number of valid Green phases
+            self.action_spaces[agent] = Discrete(len(self.green_phases[agent]))
             self.last_action[agent] = 0
 
         return {a: self._get_state(a) for a in self.agent_ids}
+
+    def step(self, actions):
+        """Executes one step, mapping AI actions to XML Green indices."""
+        for agent_id, ai_action in actions.items():
+            # Map the AI's 0, 1, 2... to actual XML indices (e.g., 0, 4, 8...)
+            target_phase = self.green_phases[agent_id][ai_action]
+            traci.trafficlight.setPhase(agent_id, target_phase)
+            
+        # Increased simulation interval to 10 seconds (20 steps * 0.5s)
+        # This gives traffic more time to react to signal changes
+        for _ in range(20): 
+            traci.simulationStep()
+            
+        states = {a: self._get_state(a) for a in self.agent_ids}
+        rewards = {a: self._calculate_reward(a, actions[a]) for a in self.agent_ids}
+        
+        # Termination at 1800s (30 minutes)
+        done = traci.simulation.getTime() >= 1800 or traci.simulation.getMinExpectedNumber() <= 0
+        dones = {a: done for a in self.agent_ids}
+        
+        return states, rewards, dones, {}
 
     def close(self):
         if traci.isLoaded():
