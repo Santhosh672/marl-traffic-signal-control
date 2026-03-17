@@ -135,27 +135,107 @@ class MultiAgentTrafficEnv:
             self.last_action[agent] = 0
 
         return {a: self._get_state(a) for a in self.agent_ids}
+    
+    def _spawn_ambulance(self, veh_id, route_id):
+        """Helper method to inject an ambulance dynamically."""
+        try:
+            # 1. Spawn the vehicle
+            traci.vehicle.add(
+                vehID=veh_id, 
+                routeID=route_id, 
+                typeID="ambulance", 
+                depart="now",             
+                departLane="best",        
+                departSpeed="max"         
+            )
+            
+            # 3. Enable visual emergency lights (GUI only)
+            # traci.vehicle.setParameter(veh_id, "has.bluelight.device", "true")
+            print(f">>> [SUMO ALERT] Ambulance '{veh_id}' entered the network on '{route_id}'!")
+            
+        except traci.exceptions.TraCIException as e:
+            print(f">>> [SUMO ERROR] Failed to spawn ambulance: {e}")
 
     def step(self, actions):
-        """Executes one step, mapping AI actions to XML Green indices."""
+        """Executes one step, mapping AI actions to XML Green indices or Predictive Emergency Overrides."""
+        
+        # ==========================================================
+        # MODULE 8: TERMINAL COMMAND INJECTION (LISTENER)
+        # ==========================================================
+        trigger_path = "ambulance_trigger.txt"
+        if os.path.exists(trigger_path):
+            try:
+                with open(trigger_path, "r") as f:
+                    data = f.read().strip().split(",")
+                if len(data) == 2:
+                    veh_id, route_id = data
+                    # Calls your _spawn_ambulance function
+                    self._spawn_ambulance(veh_id, route_id) 
+            except Exception as e:
+                pass # Ignore read collisions if the file is currently being written
+            finally:
+                os.remove(trigger_path) # Delete the file so it only spawns once!
+
+        # ==========================================================
+        # MODULE 2: PREDICTIVE EMERGENCY GREEN CORRIDOR
+        # ==========================================================
+        # 1. First, find all emergency vehicles currently in the whole network
+        active_vehs = traci.vehicle.getIDList()
+        emergency_vehs = [v for v in active_vehs if traci.vehicle.getVehicleClass(v) == "emergency" or traci.vehicle.getTypeID(v) in ["emergency", "ambulance"]]
+
         for agent_id, ai_action in actions.items():
-            # Map the AI's 0, 1, 2... to actual XML indices (e.g., 0, 4, 8...)
-            target_phase = self.green_phases[agent_id][ai_action]
-            traci.trafficlight.setPhase(agent_id, target_phase)
             
-        # Increased simulation interval to 10 seconds (20 steps * 0.5s)
-        # This gives traffic more time to react to signal changes
+            emergency_override_phase = None
+            
+            # 2. Check if this specific junction needs to clear a path for any ambulance
+            for veh in emergency_vehs:
+                # getNextTLS returns: [(tlsID, tlsIndex, distance, state), ...] for the vehicle's route
+                upcoming_traffic_lights = traci.vehicle.getNextTLS(veh)
+                
+                for tls_info in upcoming_traffic_lights:
+                    tls_id, tls_link_idx, distance, _ = tls_info
+                    
+                    # 3. Lookahead threshold: If the ambulance is heading towards THIS agent_id 
+                    # and is within 600 meters (covers current AND next intersection)
+                    if tls_id == agent_id and distance < 600.0:
+                        
+                        # Find the phase that gives this specific approach a Green ('G' or 'g')
+                        logic = traci.trafficlight.getAllProgramLogics(agent_id)[0]
+                        for phase_idx, phase in enumerate(logic.phases):
+                            if phase.state[tls_link_idx] in ('G', 'g'):
+                                emergency_override_phase = phase_idx
+                                #print(f"\n[PRE-EMPTIVE OVERRIDE] Junction {agent_id} | Ambulance {veh} is {distance:.1f}m away!")
+                                break
+                                
+                    if emergency_override_phase is not None: break
+                if emergency_override_phase is not None: break
+
+            # ==========================================================
+            # EXECUTION: AI vs PREDICTIVE OVERRIDE
+            # ==========================================================
+            if emergency_override_phase is not None:
+                # Bypass the AI completely and force the emergency phase early
+                traci.trafficlight.setPhase(agent_id, emergency_override_phase)
+            else:
+                # Standard AI Execution
+                target_phase = self.green_phases[agent_id][ai_action]
+                traci.trafficlight.setPhase(agent_id, target_phase)
+            
+        # Execute in SUMO (20 simulation steps = 10 real-time seconds)
         for _ in range(20): 
             traci.simulationStep()
             
         states = {a: self._get_state(a) for a in self.agent_ids}
         rewards = {a: self._calculate_reward(a, actions[a]) for a in self.agent_ids}
         
-        # Termination at 1800s (30 minutes)
-        done = traci.simulation.getTime() >= 1800 or traci.simulation.getMinExpectedNumber() <= 0
-        dones = {a: done for a in self.agent_ids}
+        # Termination at 1800s (30 minutes) or if the network is empty
+        dones = {a: (traci.simulation.getTime() >= 1800 or traci.simulation.getMinExpectedNumber() <= 0) for a in self.agent_ids}
         
         return states, rewards, dones, {}
+
+    def close(self):
+        if traci.isLoaded():
+            traci.close()
 
     def close(self):
         if traci.isLoaded():
